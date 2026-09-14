@@ -24,6 +24,12 @@ Recommended companion source archive:
 KeeperFX-Vita-v1.02-SOURCE-SNAPSHOT-no-game-data.zip
 ```
 
+SHA256:
+
+```text
+9c586024262c5b6c9baf8e54318753b9ce58385fba96bc3e12dfb38c71be8896
+```
+
 This snapshot contains the retained Vita source baseline and the patch/post-link documentation used for the current development state. It contains no commercial game data.
 
 ## Private integrated artifact
