@@ -37,6 +37,13 @@ Full instructions: **[INSTALL.md](INSTALL.md)**.
 
 The public VPK contains only a tiny license-free placeholder data archive because the current first-run bootstrap expects `app0:/game_data/keeperfx_data_bundle.zip`. It contains **no game assets**.
 
+## Screenshots
+<img width="960" height="544" alt="2026-09-14-123237" src="https://github.com/user-attachments/assets/b990edd4-7b3a-489e-901c-8aebc4f5e134" />
+<img width="960" height="544" alt="2026-09-14-123145" src="https://github.com/user-attachments/assets/f2221dd3-8465-4b61-8cbc-cf60d1c4ab1f" />
+<img width="960" height="544" alt="2026-09-14-123128" src="https://github.com/user-attachments/assets/fbb4e306-596b-49c7-873d-c0202461c7df" />
+<img width="960" height="544" alt="2026-09-14-123112" src="https://github.com/user-attachments/assets/0e7e54c6-3f70-4229-9cd9-7d5c7e46690b" />
+
+
 ## Release files
 
 Recommended public release name:
