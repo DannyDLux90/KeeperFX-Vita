@@ -46,3 +46,10 @@ PS Vita application ID: `KFXV00001`
 - The experimental replacement FFmpeg KVF video player, 640 × 480 intro mode, and experimental video recorder/dual-start bubble are **not** part of the final RC4 build.
 - Multiplayer/networking remains unverified for this final build.
 - The historical v1.02 in-game quit-to-menu limitation has not been independently re-tested in the final RC4 acceptance run.
+
+## Final LiveArea manual update (2026-10-21)
+
+- Updated the in-bubble **Tasten & Sticks** page for the RC4 control scheme.
+- Added a sixth manual page explaining L/R menu tabs, the visible yellow focus outline and direct creature-portrait selection with the D-pad and X.
+- Kept existing touch, installation and troubleshooting help pages. All page numbers now show 1/6–6/6.
+- Documentation-only VPK revision: exact RC4 `eboot.bin` retained. See [MANUAL-v1.03.md](MANUAL-v1.03.md).
