@@ -1,0 +1,1023 @@
+--- a/src/front_input.c
++++ b/src/front_input.c
+@@ -95,6 +95,8 @@
+ /* Implemented by input_vita.c. Touch remains pixel-exact; controller pointer
+  * input gets a small creature-selection magnet below. */
+ extern int vita_pointer_is_touch_driven(void);
++/* Shoulder events are consumed during gameplay, after the pad poll has ended. */
++extern int vita_consume_sidebar_tab_step(void);
+ #endif
+ 
+ unsigned short const zoom_key_room_order[] =
+@@ -2506,6 +2508,17 @@
+  */
+ static void get_dungeon_control_nonaction_inputs(void)
+ {
++#ifdef PLATFORM_VITA
++  /* This handler is reached in every dungeon-top frame, including when GUI
++   * input consumed a click, when a room is being placed, and while player
++   * actions are pending. The old status-panel action handler was skipped in
++   * all those cases, silently dropping L/R requests. */
++  int vita_tab_step = vita_consume_sidebar_tab_step();
++  if (vita_tab_step != 0) {
++    go_to_adjacent_menu_tab(vita_tab_step);
++    SYNCLOG("Vita sidebar: shoulder %s -> menu switch", vita_tab_step < 0 ? "L" : "R");
++  }
++#endif
+   struct Coord3d pos;
+   my_mouse_x = GetMouseX();
+   my_mouse_y = GetMouseY();
+--- a/src/bflib_fmvids.cpp
++++ b/src/bflib_fmvids.cpp
+@@ -423,9 +423,7 @@
+ 
+     const size_t raw_size = (size_t)hdr.width * (size_t)hdr.height;
+     std::vector<uint8_t> packed;
+-    std::vector<uint8_t> pixels(raw_size);
+     std::vector<int16_t> audio_pcm;
+-    uint8_t palette[PALETTE_COLORS * 4];
+ 
+     IAudioPlatform *audio = PlatformManager_GetAudio();
+     bool audio_open = false;
+@@ -435,48 +433,80 @@
+             WARNLOG("Vita FMV: native audio unavailable for %s", filename);
+     }
+ 
+-    using kclock = std::chrono::high_resolution_clock;
+-    const auto wall_start = kclock::now();
+-    TbBool ok = true;
+-
+-    JUSTLOG("Vita FMV: playing native cache %s (%ux%u, %u frames, %u/%u fps%s)",
+-            filename, hdr.width, hdr.height, hdr.frame_count, hdr.fps_num, hdr.fps_den,
+-            audio_open ? ", audio" : "");
+-
+-    for (uint32_t frame_no = 0; frame_no < hdr.frame_count; ++frame_no) {
++    /* Audio in KVF is packed in bursts of 2736 stereo frames for each 57 ms
++     * movie frame. A 2048-frame SCE output grain lasts only ~42.7 ms. If the
++     * video render/decode thread is late, handing out audio only for the frame
++     * about to be presented can starve the output thread even when the data
++     * itself is perfect. Keep four decoded video frames in a small queue, and
++     * give the audio worker their PCM *ahead of the corresponding image*.
++     *
++     * No resampling, PCM modification, palette conversion, resolution change,
++     * or alternative video decoder. Startup allocation is ~260 KB for PAL8. */
++    struct QueuedKvfVideoFrame {
++        explicit QueuedKvfVideoFrame(size_t pixel_count) : pixels(pixel_count) {}
++        std::vector<uint8_t> pixels;
++        uint8_t palette[PALETTE_COLORS * 4];
++    };
++    const uint32_t frame_lead = audio_open
++        ? ((hdr.frame_count < 4U) ? hdr.frame_count : 4U)
++        : 1U;
++    std::vector<QueuedKvfVideoFrame> video_queue;
++    video_queue.reserve(frame_lead);
++    for (uint32_t i = 0; i < frame_lead; ++i)
++        video_queue.emplace_back(raw_size);
++
++    auto decode_ahead = [&](uint32_t frame_no, QueuedKvfVideoFrame &dst) -> bool {
+         VitaKvfFrameHeader fh = {};
+         if (!vita_read_exact(f, &fh, sizeof(fh)) ||
+             fh.packed_video_bytes == 0 || fh.packed_video_bytes > raw_size + 65536U ||
+             fh.audio_frames > 48000U * 2U ||
+-            !vita_read_exact(f, palette, sizeof(palette))) {
++            !vita_read_exact(f, dst.palette, sizeof(dst.palette))) {
++            return false;
++        }
++        packed.resize(fh.packed_video_bytes);
++        if (!vita_read_exact(f, packed.data(), packed.size()))
++            return false;
++        uLongf decoded = (uLongf)raw_size;
++        if (uncompress(dst.pixels.data(), &decoded, packed.data(), (uLong)packed.size()) != Z_OK ||
++            decoded != raw_size) {
++            WARNLOG("Vita FMV: corrupt frame %u in %s", frame_no, filename);
++            return false;
++        }
++        const size_t audio_samples = (size_t)fh.audio_frames * 2U;
++        if (audio_samples > 0) {
++            audio_pcm.resize(audio_samples);
++            if (!vita_read_exact(f, audio_pcm.data(), audio_samples * sizeof(int16_t)))
++                return false;
++            if (audio_open)
++                audio->FmvAudioQueue(audio_pcm.data(), (int)(audio_samples * sizeof(int16_t)));
++        }
++        return true;
++    };
++
++    using kclock = std::chrono::high_resolution_clock;
++    const auto wall_start = kclock::now();
++    TbBool ok = true;
++
++    JUSTLOG("Vita FMV: playing native cache %s (%ux%u, %u frames, %u/%u fps%s)",
++            filename, hdr.width, hdr.height, hdr.frame_count, hdr.fps_num, hdr.fps_den,
++            audio_open ? ", audio" : "");
++
++    /* Prime before the first frame is displayed. With the original KVF
++     * (2736 PCM frames/image), four images give 10,944 PCM frames (228 ms).
++     * That stays under the eight-grain SCE ring and masks frame-level jitter. */
++    uint32_t next_decode = 0;
++    for (; next_decode < frame_lead; ++next_decode) {
++        if (!decode_ahead(next_decode, video_queue[next_decode])) {
+             ok = false;
+             break;
+         }
+-
+-        packed.resize(fh.packed_video_bytes);
+-        if (!vita_read_exact(f, packed.data(), packed.size())) {
+-            ok = false;
+-            break;
+-        }
+-        uLongf decoded = (uLongf)raw_size;
+-        if (uncompress(pixels.data(), &decoded, packed.data(), (uLong)packed.size()) != Z_OK ||
+-            decoded != raw_size) {
+-            WARNLOG("Vita FMV: corrupt frame %u in %s", frame_no, filename);
+-            ok = false;
+-            break;
+-        }
+-
+-        const size_t audio_samples = (size_t)fh.audio_frames * 2U;
+-        if (audio_samples > 0) {
+-            audio_pcm.resize(audio_samples);
+-            if (!vita_read_exact(f, audio_pcm.data(), audio_samples * sizeof(int16_t))) {
+-                ok = false;
+-                break;
+-            }
+-            if (audio_open)
+-                audio->FmvAudioQueue(audio_pcm.data(), (int)(audio_samples * sizeof(int16_t)));
+-        }
+-
++    }
++    if (audio_open && ok)
++        JUSTLOG("Vita FMV: audio preroll %u frames (native KVF, unchanged PCM/palette)",
++                (unsigned)frame_lead);
++
++    for (uint32_t frame_no = 0; ok && frame_no < hdr.frame_count; ++frame_no) {
++        QueuedKvfVideoFrame &frame = video_queue[frame_no % frame_lead];
+         const int64_t pts_ns = (int64_t)frame_no * 1000000000LL * (int64_t)hdr.fps_den /
+                                (int64_t)hdr.fps_num;
+         if (audio_open) {
+@@ -490,8 +520,8 @@
+                 std::this_thread::sleep_for(target - now);
+         }
+ 
+-        present_pal8_movie_frame(pixels.data(), (int)hdr.width, (int)hdr.height,
+-                                 (int)hdr.width, palette, flags);
++        present_pal8_movie_frame(frame.pixels.data(), (int)hdr.width, (int)hdr.height,
++                                 (int)hdr.width, frame.palette, flags);
+ 
+         if (!poll_inputs()) {
+             ok = false;
+@@ -501,6 +531,16 @@
+             (lbKeyOn[KC_ESCAPE] || lbKeyOn[KC_RETURN] || lbKeyOn[KC_SPACE] || lbDisplay.LeftButton)) {
+             clear_key_pressed(lbInkey);
+             break;
++        }
++
++        /* Recycle only the video slot that has already been displayed.
++         * Submit the corresponding future PCM before the next render cycle. */
++        if (next_decode < hdr.frame_count) {
++            if (!decode_ahead(next_decode, frame)) {
++                ok = false;
++                break;
++            }
++            ++next_decode;
+         }
+     }
+ 
+--- a/src/frontmenu_ingame_map.c
++++ b/src/frontmenu_ingame_map.c
+@@ -118,7 +118,15 @@
+ static long NumBackColours;
+ static long PrevPixelSize;
+ static unsigned char MapBackColours[256];
+-static unsigned char PanelColours[16*PnC_End];
++/*
++ * The software minimap can see as many as 256 distinct background palette
++ * indices.  The former fixed [16 * PnC_End] array was overrun when the 17th
++ * colour was encountered.  Door colours 60/79 then overwrote neighbouring
++ * GUI and camera globals (observed as 0x3c and 0x4f4f4f4f on PS Vita).
++ * Allocate for the actual count instead, reusing the table between frames.
++ */
++static unsigned char *PanelColours = NULL;
++static size_t panel_colours_capacity = 0;
+ static long PrevRoomHighlight;
+ static long PrevDoorHighlight;
+ static unsigned short PanelMap[MAX_SUBTILES_X*MAX_SUBTILES_Y];
+@@ -1041,8 +1049,13 @@
+                 }
+                 if (num_colours == colour)
+                 {
+-                    MapBackColours[num_colours] = orig;
+-                    num_colours++;
++                    if (num_colours < (int)sizeof(MapBackColours)) {
++                        MapBackColours[num_colours] = orig;
++                        num_colours++;
++                    } else {
++                        ERRORLOG("Minimap: background palette exhausted; using index zero");
++                        colour = 0;
++                    }
+                 }
+                 MapBackground[bkgnd_pos+w] = colour;
+             }
+@@ -1055,6 +1068,21 @@
+ 
+ void setup_panel_colors(void)
+ {
++    /* Reserve BEFORE writing any entry.  Capacity is counted in palette
++     * bytes, not in background colours.  A full 256-colour map costs up to
++     * 9.9 MB, but the common single-colour GPU path uses only ~38 KB. */
++    if (NumBackColours < 1 || NumBackColours > (long)sizeof(MapBackColours)) {
++        ERRORLOG("Minimap: invalid background colour count %ld", NumBackColours);
++        NumBackColours = 0;
++        return;
++    }
++    size_t required = (size_t)NumBackColours * (size_t)PnC_End;
++    if (required > panel_colours_capacity) {
++        PanelColours = (unsigned char *)KfxRealloc(PanelColours, required);
++        panel_colours_capacity = required;
++        SYNCLOG("Vita minimap: resized palette table to %ld colours (%lu bytes)",
++            NumBackColours, (unsigned long)required);
++    }
+     int frame;
+     frame = (get_gameturn() % (4 * gui_blink_rate)) / gui_blink_rate;
+     unsigned int frcol;
+@@ -1163,6 +1191,7 @@
+ 
+ void update_panel_color_player_color(PlayerNumber plyr_idx, unsigned char color_idx)
+ {
++    if (PanelColours == NULL || NumBackColours <= 0) return;
+     int n = 0;
+     int pncol_idx = 0;
+     for (int bkcol_idx=0; bkcol_idx < NumBackColours; bkcol_idx++)
+@@ -1185,6 +1214,7 @@
+ 
+ void update_panel_colors(void)
+ {
++    if (PanelColours == NULL || NumBackColours <= 0) return;
+     int frame;
+     frame = (get_gameturn() % (4 * gui_blink_rate)) / gui_blink_rate;
+     unsigned int frcol;
+@@ -1334,7 +1364,7 @@
+     struct PlayerInfo *player = get_my_player();
+     struct Camera *cam = get_local_active_camera(player->id_number);
+ 
+-    if ((cam == NULL) || (MapDiagonalLength < 1))
++    if ((cam == NULL) || (MapDiagonalLength < 1) || (PanelColours == NULL))
+         return;
+     if (get_gameturn() <= 1) {reset_all_minimap_interpolation = true;} //Fixes initial minimap frame being purple
+ 
+--- a/src/frontend.cpp
++++ b/src/frontend.cpp
+@@ -100,6 +100,11 @@
+ 
+ #ifdef __cplusplus
+ extern "C" {
++#endif
++
++#ifdef PLATFORM_VITA
++/* Implemented by input_vita.c; expose only bounded focus geometry. */
++extern int vita_get_sidebar_focus_rect(int *x, int *y, int *w, int *h);
+ #endif
+ 
+ extern long double last_draw_completed_time;
+@@ -3497,6 +3502,20 @@
+             }
+         }
+     }
++#ifdef PLATFORM_VITA
++    /* Draw over the real button after the GUI's regular rendering, so the
++     * selected room/spell/creature is visible even with a tiny Vita cursor. */
++    int fx, fy, fw, fh;
++    if (vita_get_sidebar_focus_rect(&fx, &fy, &fw, &fh)) {
++        const TbPixel dark = colours[0][0][0];
++        const TbPixel bright = colours[15][15][0];
++        UIRenderer_BeginTopOverlay();
++        UIRenderer_SubmitOutlineBox(fx - 3, fy - 3, fw + 6, fh + 6, dark);
++        UIRenderer_SubmitOutlineBox(fx - 2, fy - 2, fw + 4, fh + 4, bright);
++        UIRenderer_SubmitOutlineBox(fx - 1, fy - 1, fw + 2, fh + 2, bright);
++        UIRenderer_EndTopOverlay();
++    }
++#endif
+     lbDisplay.DrawFlags = flg_mem;
+     SYNCDBG(8,"Finished");
+ }
+--- a/src/audio/audio_vita.c
++++ b/src/audio/audio_vita.c
+@@ -54,6 +54,7 @@
+ /* ── Constants ──────────────────────────────────────────────────────────── */
+ #define VITA_OUT_RATE     48000
+ #define VITA_DMA_GRAIN    1024        /* samples per DMA output call */
++#define VITA_DMA_BUFFERS  2           /* SFX output ping-pong */
+ #define VITA_MAX_CHANNELS 16          /* concurrent SFX voices */
+ #define VITA_NUM_BANKS    2           /* 0 = sound.dat, 1 = speech_*.dat */
+ #define VITA_MAX_SAMPLES  4096        /* max samples per bank */
+@@ -132,7 +133,7 @@
+ static TbFileHandle s_bank_fh[VITA_NUM_BANKS];  /* open file handles for on-demand streaming */
+ static SwChannel   s_sw[VITA_MAX_CHANNELS];
+ static int32_t     s_mix_buf[VITA_DMA_GRAIN * 2];   /* 32-bit accumulator */
+-static int16_t     s_out_buf[VITA_DMA_GRAIN * 2];   /* final S16LE stereo */
++static int16_t     s_out_buf[VITA_DMA_BUFFERS][VITA_DMA_GRAIN * 2] __attribute__((aligned(64)));
+ static int         s_dma_port = -1;
+ static SceUID      s_dma_thread = -1;
+ static volatile int s_dma_running = 0;
+@@ -149,7 +150,7 @@
+ static SceUID           s_music_thread  = -1;
+ static SceUID           s_music_sema    = -1;
+ static int              s_music_port    = -1;
+-static int16_t          s_music_buf[MUSIC_GRAIN * 2]; /* stereo */
++static int16_t          s_music_buf[2][MUSIC_GRAIN * 2] __attribute__((aligned(64))); /* stereo */
+ static float            s_music_vol     = 0.5f;
+ static char             s_music_path[1024];
+ static volatile MusicCmd s_music_cmd    = MUS_NONE;
+@@ -218,22 +219,29 @@
+ 
+ static void vita_stream_play_predecoded(const int16_t *pcm, size_t frames)
+ {
+-    int16_t grain[STREAM_GRAIN * 2];
++    /* Keep an accepted block intact while preparing the next one. */
++    int16_t grain[2][STREAM_GRAIN * 2] __attribute__((aligned(64)));
++    unsigned int buffer_no = 0;
+     size_t pos = 0;
+     while (pos < frames && s_stream_running && s_stream_cmd == STR_NONE) {
++        int16_t *out = grain[buffer_no];
+         size_t take = frames - pos;
+         if (take > STREAM_GRAIN) take = STREAM_GRAIN;
+         int vol = s_stream_vol;
+         if (vol < 0) vol = 0;
+         if (vol > 256) vol = 256;
+         for (size_t i = 0; i < take * 2u; ++i)
+-            grain[i] = (int16_t)(((int32_t)pcm[pos * 2u + i] * vol) / 256);
++            out[i] = (int16_t)(((int32_t)pcm[pos * 2u + i] * vol) / 256);
+         if (take < STREAM_GRAIN)
+-            memset(grain + take * 2u, 0,
++            memset(out + take * 2u, 0,
+                    (STREAM_GRAIN - take) * 2u * sizeof(int16_t));
+-        sceAudioOutOutput(s_stream_port, grain);
++        if (sceAudioOutOutput(s_stream_port, out) < 0)
++            break;
++        buffer_no ^= 1u;
+         pos += take;
+     }
++    /* The stack buffers must remain alive until the queued audio drains. */
++    sceAudioOutOutput(s_stream_port, NULL);
+ }
+ 
+ static void vita_stream_decode_file(const char *path)
+@@ -599,6 +607,7 @@
+ {
+     (void)args; (void)argp;
+     sceKernelChangeThreadVfpException(0x0800009FU, 0x0);
++    unsigned int buffer_no = 0;
+ 
+     while (s_dma_running) {
+         memset(s_mix_buf, 0, sizeof(s_mix_buf));
+@@ -619,14 +628,18 @@
+             }
+         }
+ 
++        int16_t *out = s_out_buf[buffer_no];
+         for (int s = 0; s < VITA_DMA_GRAIN * 2; s++) {
+             int32_t v = s_mix_buf[s];
+             if (v >  32767) v =  32767;
+             if (v < -32768) v = -32768;
+-            s_out_buf[s] = (int16_t)v;
+-        }
+-        sceAudioOutOutput(s_dma_port, s_out_buf);
+-    }
++            out[s] = (int16_t)v;
++        }
++        if (sceAudioOutOutput(s_dma_port, out) < 0)
++            break;
++        buffer_no ^= 1u;
++    }
++    sceAudioOutOutput(s_dma_port, NULL);
+     return sceKernelExitDeleteThread(0);
+ }
+ 
+@@ -639,6 +652,7 @@
+ {
+     (void)args; (void)argp;
+     sceKernelChangeThreadVfpException(0x0800009FU, 0x0);
++    unsigned int buffer_no = 0;
+ 
+     while (s_music_running) {
+         /* block until a play command arrives */
+@@ -674,15 +688,17 @@
+                 s_music_cmd = MUS_NONE; s_music_paused = 0;
+             }
+ 
++            int16_t *out = s_music_buf[buffer_no];
+             if (s_music_paused) {
+-                memset(s_music_buf, 0, sizeof(s_music_buf));
+-                sceAudioOutOutput(s_music_port, s_music_buf);
++                memset(out, 0, sizeof(s_music_buf[0]));
++                if (sceAudioOutOutput(s_music_port, out) < 0) break;
++                buffer_no ^= 1u;
+                 continue;
+             }
+ 
+             /* decode one grain worth of stereo S16 */
+-            char *dst = (char *)s_music_buf;
+-            int remaining = (int)sizeof(s_music_buf);
++            char *dst = (char *)out;
++            int remaining = (int)sizeof(s_music_buf[0]);
+             while (remaining > 0) {
+                 long got = ov_read(&vf, dst, remaining, 0, 2, 1, &bitstream);
+                 if (got < 0) { remaining = 0; break; } /* decode error */
+@@ -691,12 +707,14 @@
+             }
+ 
+             /* apply music volume */
+-            int n = (int)(sizeof(s_music_buf) / sizeof(s_music_buf[0]));
++            int n = (int)(sizeof(s_music_buf[0]) / sizeof(s_music_buf[0][0]));
+             for (int i = 0; i < n; i++)
+-                s_music_buf[i] = (int16_t)((float)s_music_buf[i] * s_music_vol);
+-
+-            sceAudioOutOutput(s_music_port, s_music_buf);
+-        }
++                out[i] = (int16_t)((float)out[i] * s_music_vol);
++
++            if (sceAudioOutOutput(s_music_port, out) < 0) break;
++            buffer_no ^= 1u;
++        }
++        sceAudioOutOutput(s_music_port, NULL);
+         ov_clear(&vf);
+     }
+     return sceKernelExitDeleteThread(0);
+@@ -1085,7 +1103,7 @@
+ 
+ /* ── FMV audio (dedicated SCE port for Smacker playback) ────────────────── */
+ #define FMV_DMA_GRAIN   2048   /* samples per sceAudioOutOutput call */
+-#define FMV_RING_GRAINS 4      /* ring buffer capacity: 4 × ~42ms = ~170ms */
++#define FMV_RING_GRAINS 8      /* ring capacity ~341ms; one slot is retained during output */
+ 
+ static int     s_fmv_port         = -1;
+ static int     s_fmv_grain        = FMV_DMA_GRAIN;
+@@ -1101,8 +1119,19 @@
+  * s_fmv_grain_start_us: sceKernelGetProcessTimeWide() result at the moment
+  *   sceAudioOutOutput returned for the current grain (i.e. when it started playing).
+  *   Used to interpolate within the grain for sub-42ms clock accuracy. */
+-static volatile uint64_t s_fmv_samples_played  = 0;
+-static volatile uint64_t s_fmv_grain_start_us  = 0;
++/* Both 64-bit fields are shared between the ARM32 FMV output and video threads.
++ * A volatile uint64_t is not an atomic snapshot on ARM32. Keep the pair
++ * consistent under a very short mutex (never held while blocking on output). */
++static uint64_t s_fmv_samples_played  = 0;
++static uint64_t s_fmv_grain_start_us  = 0;
++static SceUID s_fmv_clock_mutex = -1;
++
++/* All counters are written only by the FMV output thread and read after join. */
++static uint32_t s_fmv_output_errors = 0;
++static uint32_t s_fmv_starved_waits = 0;
++static uint32_t s_fmv_output_grains = 0;
++static uint64_t s_fmv_max_wait_us = 0;
++static uint64_t s_fmv_max_output_us = 0;
+ 
+ /* Dedicated output thread — two-semaphore bounded buffer pattern:
+      s_fmv_sema_empty = free slot count  (starts at FMV_RING_GRAINS)
+@@ -1115,26 +1144,66 @@
+ static SceUID  s_fmv_sema_full   = -1;   /* counts filled ring slots */
+ static SceUID  s_fmv_thread      = -1;
+ static int     s_fmv_thread_run  = 0;
+-static int16_t s_fmv_ring[FMV_RING_GRAINS][FMV_DMA_GRAIN * 2];
++static int16_t s_fmv_ring[FMV_RING_GRAINS][FMV_DMA_GRAIN * 2] __attribute__((aligned(64)));
+ static int     s_fmv_ring_wr     = 0;   /* written by decode thread */
+ static int     s_fmv_ring_rd     = 0;   /* read by audio thread */
++static uint8_t s_fmv_slot_end[FMV_RING_GRAINS]; /* in-band drain marker */
+ 
+ static int vita_fmv_audio_thread(SceSize args, void *argp)
+ {
+     (void)args; (void)argp;
+-    while (s_fmv_thread_run) {
+-        sceKernelWaitSema(s_fmv_sema_full, 1, NULL);
+-        if (!s_fmv_thread_run) break;
+-        int rd = s_fmv_ring_rd;
+-        sceAudioOutOutput(s_fmv_port, s_fmv_ring[rd]);
+-        /* sceAudioOutOutput just returned: the previous grain has finished and
+-           the grain we submitted is now playing.  Record the wall-clock moment
+-           (microseconds) so vita_fmv_audio_pts_ns() can interpolate within the
+-           current grain, giving sub-42ms clock accuracy. */
+-        s_fmv_grain_start_us = sceKernelGetSystemTimeWide();
++    int held = -1;       /* Device still owns the last submitted slot. */
++    int started = 0;
++    const uint64_t block_us = (uint64_t)FMV_DMA_GRAIN * 1000000ULL /
++                              (uint64_t)s_fmv_output_rate;
++    for (;;) {
++        const uint64_t begin_wait_us = sceKernelGetSystemTimeWide();
++        if (sceKernelWaitSema(s_fmv_sema_full, 1, NULL) < 0) {
++            ++s_fmv_output_errors;
++            break;
++        }
++        const uint64_t got_us = sceKernelGetSystemTimeWide();
++        const uint64_t waited_us = got_us - begin_wait_us;
++        if (waited_us > s_fmv_max_wait_us)
++            s_fmv_max_wait_us = waited_us;
++        if (started && waited_us > block_us / 2)
++            ++s_fmv_starved_waits; /* Diagnostic: prolonged producer gap. */
++
++        const int rd = s_fmv_ring_rd;
+         s_fmv_ring_rd = (rd + 1) % FMV_RING_GRAINS;
+-        s_fmv_samples_played += (uint64_t)s_fmv_grain;
+-        sceKernelSignalSema(s_fmv_sema_empty, 1);
++        if (s_fmv_slot_end[rd]) {
++            /* Drain before returning the last buffer to the producer. */
++            int rc = sceAudioOutOutput(s_fmv_port, NULL);
++            if (rc < 0) ++s_fmv_output_errors;
++            if (held >= 0)
++                sceKernelSignalSema(s_fmv_sema_empty, 1);
++            sceKernelSignalSema(s_fmv_sema_empty, 1); /* end marker */
++            break;
++        }
++
++        const uint64_t begin_output_us = sceKernelGetSystemTimeWide();
++        const int rc = sceAudioOutOutput(s_fmv_port, s_fmv_ring[rd]);
++        const uint64_t after_output_us = sceKernelGetSystemTimeWide();
++        const uint64_t output_us = after_output_us - begin_output_us;
++        if (output_us > s_fmv_max_output_us)
++            s_fmv_max_output_us = output_us;
++        if (rc < 0) {
++            ++s_fmv_output_errors;
++            /* No ownership transfer on failure. */
++            sceKernelSignalSema(s_fmv_sema_empty, 1);
++            continue;
++        }
++
++        if (held >= 0)
++            sceKernelSignalSema(s_fmv_sema_empty, 1);
++        held = rd;
++        started = 1;
++        ++s_fmv_output_grains;
++        if (sceKernelLockMutex(s_fmv_clock_mutex, 1, NULL) >= 0) {
++            s_fmv_grain_start_us = after_output_us;
++            s_fmv_samples_played += (uint64_t)s_fmv_grain;
++            sceKernelUnlockMutex(s_fmv_clock_mutex, 1);
++        }
+     }
+     return sceKernelExitDeleteThread(0);
+ }
+@@ -1145,8 +1214,14 @@
+  *  This gives sub-grain (~1ms) accuracy instead of 42ms quantisation steps. */
+ int64_t vita_fmv_audio_pts_ns(void)
+ {
+-    uint64_t played = s_fmv_samples_played;
+-    uint64_t start  = s_fmv_grain_start_us;
++    uint64_t played = 0;
++    uint64_t start  = 0;
++    if (s_fmv_clock_mutex < 0) return 0;
++    if (sceKernelLockMutex(s_fmv_clock_mutex, 1, NULL) < 0) return 0;
++    played = s_fmv_samples_played;
++    start  = s_fmv_grain_start_us;
++    sceKernelUnlockMutex(s_fmv_clock_mutex, 1);
++    if (played == 0 || start == 0) return 0;
+     uint32_t rate   = (uint32_t)s_fmv_output_rate;
+     uint32_t grain  = (uint32_t)s_fmv_grain;
+ 
+@@ -1194,9 +1269,23 @@
+     s_fmv_accum_count    = 0;
+     s_fmv_ring_wr        = 0;
+     s_fmv_ring_rd        = 0;
++    memset(s_fmv_slot_end, 0, sizeof(s_fmv_slot_end));
+     s_fmv_samples_played = 0;
+     s_fmv_grain_start_us = 0;
+     s_fmv_output_rate    = rate;
++    s_fmv_output_errors = 0;
++    s_fmv_starved_waits = 0;
++    s_fmv_output_grains = 0;
++    s_fmv_max_wait_us = 0;
++    s_fmv_max_output_us = 0;
++    s_fmv_clock_mutex = sceKernelCreateMutex("vita_fmv_clock", 0, 0, NULL);
++    if (s_fmv_clock_mutex < 0) {
++        WARNLOG("Vita FMV: clock mutex creation failed (%08X)",
++                (unsigned)s_fmv_clock_mutex);
++        sceAudioOutReleasePort(s_fmv_port);
++        s_fmv_port = -1;
++        return 0;
++    }
+ 
+     /* empty sema: starts at FMV_RING_GRAINS (all slots free) */
+     s_fmv_sema_empty = sceKernelCreateSema("vita_fmv_empty", 0,
+@@ -1211,6 +1300,8 @@
+         if (s_fmv_sema_full  >= 0) { sceKernelDeleteSema(s_fmv_sema_full);  s_fmv_sema_full  = -1; }
+         sceAudioOutReleasePort(s_fmv_port);
+         s_fmv_port = -1;
++        sceKernelDeleteMutex(s_fmv_clock_mutex);
++        s_fmv_clock_mutex = -1;
+         return 0;
+     }
+ 
+@@ -1225,6 +1316,8 @@
+         sceAudioOutReleasePort(s_fmv_port);
+         s_fmv_thread = -1;
+         s_fmv_port   = -1;
++        sceKernelDeleteMutex(s_fmv_clock_mutex);
++        s_fmv_clock_mutex = -1;
+         return 0;
+     }
+     sceKernelStartThread(s_fmv_thread, 0, NULL);
+@@ -1265,11 +1358,43 @@
+ void vita_fmv_audio_close(void)
+ {
+     if (s_fmv_thread >= 0) {
+-        s_fmv_thread_run = 0;
+-        sceKernelSignalSema(s_fmv_sema_full, 1);  /* wake audio thread if blocked */
++        /* Complete the final partial grain so every PCM frame is delivered.
++           This may block on the producer semaphore, by design. */
++        if (s_fmv_accum_count > 0 && s_fmv_port >= 0) {
++            int n = s_fmv_accum_count;
++            memset(s_fmv_accum + n * 2, 0,
++                   (size_t)(s_fmv_grain - n) * 2 * sizeof(int16_t));
++            sceKernelWaitSema(s_fmv_sema_empty, 1, NULL);
++            int wr = s_fmv_ring_wr;
++            s_fmv_slot_end[wr] = 0;
++            memcpy(s_fmv_ring[wr], s_fmv_accum,
++                   (size_t)s_fmv_grain * 2 * sizeof(int16_t));
++            s_fmv_ring_wr = (wr + 1) % FMV_RING_GRAINS;
++            sceKernelSignalSema(s_fmv_sema_full, 1);
++        }
++        /* The sentinel occupies its own claimed slot. The consumer will
++           process all pending grains, call Output(NULL), then exit. */
++        sceKernelWaitSema(s_fmv_sema_empty, 1, NULL);
++        int wr = s_fmv_ring_wr;
++        s_fmv_slot_end[wr] = 1;
++        s_fmv_ring_wr = (wr + 1) % FMV_RING_GRAINS;
++        sceKernelSignalSema(s_fmv_sema_full, 1);
+         sceKernelWaitThreadEnd(s_fmv_thread, NULL, NULL);
+         sceKernelDeleteThread(s_fmv_thread);
+         s_fmv_thread = -1;
++        JUSTLOG("Vita FMV diagnostics: blocks=%u, output_errors=%u, "
++                "waits_over_half_grain=%u, max_full_wait_us=%llu, max_output_call_us=%llu, "
++                "rate=%d, grain=%d, aligned_ring=%u",
++                (unsigned)s_fmv_output_grains, (unsigned)s_fmv_output_errors,
++                (unsigned)s_fmv_starved_waits,
++                (unsigned long long)s_fmv_max_wait_us,
++                (unsigned long long)s_fmv_max_output_us,
++                s_fmv_output_rate, s_fmv_grain,
++                (unsigned)(((uintptr_t)s_fmv_ring & 63U) == 0));
++    }
++    if (s_fmv_clock_mutex >= 0) {
++        sceKernelDeleteMutex(s_fmv_clock_mutex);
++        s_fmv_clock_mutex = -1;
+     }
+     if (s_fmv_sema_empty >= 0) { sceKernelDeleteSema(s_fmv_sema_empty); s_fmv_sema_empty = -1; }
+     if (s_fmv_sema_full  >= 0) { sceKernelDeleteSema(s_fmv_sema_full);  s_fmv_sema_full  = -1; }
+--- a/src/input/input_vita.c
++++ b/src/input/input_vita.c
+@@ -19,7 +19,10 @@
+  *   - frontend: left stick + D-pad move the pointer; right stick is ignored
+  *   - Cross/Circle are left/right mouse buttons
+  *   - Square/triangle are Space/Tab
+- *   - L is pointer precision; R is Ctrl; L+D-pad up/down zooms
++ *   - in-game L/R cycle info/rooms/spells/traps/creatures
++ *   - in-game D-pad highlights the clickable controls of the current tab
++ *   - Cross confirms the highlighted control using the normal mouse click
++ *   - outside gameplay L is pointer precision and R is Ctrl
+  *   - Start is Escape; Select is M (map)
+  */
+ /******************************************************************************/
+@@ -36,6 +39,7 @@
+ 
+ #include "../bflib_keybrd.h"
+ #include "../frontend.h"
++#include "../frontmenu_ingame_tabs.h"
+ #include "../platform/vita_ime.h"
+ #include "../platform/vita_display.h"
+ #include "../post_inc.h"
+@@ -65,13 +69,8 @@
+ } s_buttonMap[] = {
+     { SCE_CTRL_SQUARE,   KC_SPACE },
+     { SCE_CTRL_TRIANGLE, KC_TAB },
+-    { SCE_CTRL_R1,       KC_LCONTROL },
+     { SCE_CTRL_START,    KC_ESCAPE },
+     { SCE_CTRL_SELECT,   KC_M },
+-    { SCE_CTRL_UP,       KC_UP },
+-    { SCE_CTRL_DOWN,     KC_DOWN },
+-    { SCE_CTRL_LEFT,     KC_LEFT },
+-    { SCE_CTRL_RIGHT,    KC_RIGHT },
+ };
+ 
+ #define BUTTON_MAP_SIZE (sizeof(s_buttonMap) / sizeof(s_buttonMap[0]))
+@@ -110,6 +109,209 @@
+     return value;
+ }
+ 
++static float s_cursorFracX, s_cursorFracY;
++static bool s_menuFocusActive = false;
++static bool s_focusNextTab = false;
++static int s_focusedButton = -1;
++/* The GUI must handle tab changes during its normal gameplay input phase,
++ * not while the platform driver is polling hardware. */
++static int s_pendingTabStep = 0;
++
++/* Only use navigation when the ordinary in-game side panel is present.
++ * Frontend, modal menus, possession and cinematic screens keep their old
++ * controls. A menu can be rebuilt between polls, so never store a GuiButton*.
++ */
++static bool vita_sidebar_is_active(void)
++{
++    if (frontend_menu_state != FeSt_INITIAL || !menu_is_active(GMnu_MAIN))
++        return false;
++    if (menu_is_active(GMnu_OPTIONS) || menu_is_active(GMnu_QUIT) ||
++        menu_is_active(GMnu_SAVE) || menu_is_active(GMnu_LOAD) ||
++        menu_is_active(GMnu_VIDEO) || menu_is_active(GMnu_SOUND) ||
++        menu_is_active(GMnu_CREATURE_QUERY1) || menu_is_active(GMnu_CREATURE_QUERY2) ||
++        menu_is_active(GMnu_CREATURE_QUERY3) || menu_is_active(GMnu_CREATURE_QUERY4))
++        return false;
++    return menu_is_active(GMnu_QUERY) || menu_is_active(GMnu_ROOM) ||
++           menu_is_active(GMnu_ROOM2) || menu_is_active(GMnu_SPELL) ||
++           menu_is_active(GMnu_SPELL2) || menu_is_active(GMnu_TRAP) ||
++           menu_is_active(GMnu_TRAP2) || menu_is_active(GMnu_CREATURE);
++}
++
++static short vita_current_tab_button(void)
++{
++    if (menu_is_active(GMnu_ROOM) || menu_is_active(GMnu_ROOM2)) return BID_ROOM_TAB;
++    if (menu_is_active(GMnu_SPELL) || menu_is_active(GMnu_SPELL2)) return BID_SPELL_TAB;
++    if (menu_is_active(GMnu_TRAP) || menu_is_active(GMnu_TRAP2)) return BID_MNFCT_TAB;
++    if (menu_is_active(GMnu_CREATURE)) return BID_CREATR_TAB;
++    return BID_INFO_TAB;
++}
++
++/* The creature portraits use BID_DEFAULT. parent_menu is an optional
++ * click-submenu target (NULL for these portraits), NOT the owner of a button.
++ * Identify the owning active menu by gmenu_idx and its specific hover callback
++ * to exclude the activity/tool buttons and scroll arrows on this page. */
++static bool vita_nav_creature_portrait(const struct GuiButton *button)
++{
++    const MenuNumber creature_slot = menu_id_to_number(GMnu_CREATURE);
++    return creature_slot != MENU_INVALID_ID &&
++           button->gmenu_idx == creature_slot &&
++           button->id_num == BID_DEFAULT &&
++           button->ptover_event == gui_over_creature_button &&
++           button->click_event != NULL;
++}
++
++static bool vita_nav_button_eligible(const struct GuiButton* button, short tab)
++{
++    if ((button->flags & (LbBtnF_Active | LbBtnF_Visible | LbBtnF_Enabled)) !=
++        (LbBtnF_Active | LbBtnF_Visible | LbBtnF_Enabled))
++        return false;
++    if (button->width <= 0 || button->height <= 0)
++        return false;
++    if (button->click_event == NULL && !(button->flags & LbBtnF_Clickable))
++        return false;
++    /* Only the actual creature portraits should be selected by the D-pad.
++     * The activity toolbar uses assigned IDs and otherwise wins the topmost
++     * row when the user wants to pick up a creature directly. */
++    if (tab == BID_CREATR_TAB)
++        return vita_nav_creature_portrait(button);
++    /* Other tabs still use their named clickable GUI controls. */
++    if (button_designation_to_tab_designation(button->id_num) == tab)
++        return true;
++    return (tab == BID_ROOM_TAB && button->id_num == BID_ROOM_NXPG) ||
++           (tab == BID_SPELL_TAB && button->id_num == BID_POWER_NXPG) ||
++           (tab == BID_MNFCT_TAB && button->id_num == BID_MNFCT_NXPG);
++}
++
++static int vita_nav_first_button(short tab)
++{
++    int best = -1;
++    int best_y = VITA_SCREEN_HEIGHT + 1;
++    int best_x = VITA_SCREEN_WIDTH + 1;
++    for (int i = 0; i < ACTIVE_BUTTONS_COUNT; ++i) {
++        const struct GuiButton* b = &active_buttons[i];
++        if (!vita_nav_button_eligible(b, tab)) continue;
++        const int cx = b->pos_x + b->width / 2;
++        const int cy = b->pos_y + b->height / 2;
++        if (cx < 0 || cx >= VITA_SCREEN_WIDTH || cy < 0 || cy >= VITA_SCREEN_HEIGHT)
++            continue;
++        if (cy < best_y || (cy == best_y && cx < best_x)) {
++            best = i;
++            best_x = cx;
++            best_y = cy;
++        }
++    }
++    return best;
++}
++
++static void vita_nav_focus_button(int index)
++{
++    if (index < 0 || index >= ACTIVE_BUTTONS_COUNT) return;
++    const struct GuiButton* b = &active_buttons[index];
++    s_mouseX = clamp_int(b->pos_x + b->width / 2, 0, VITA_SCREEN_WIDTH - 1);
++    s_mouseY = clamp_int(b->pos_y + b->height / 2, 0, VITA_SCREEN_HEIGHT - 1);
++    s_menuFocusActive = true;
++    s_focusedButton = index;
++    if (b->ptover_event == gui_over_creature_button &&
++        b->gmenu_idx == menu_id_to_number(GMnu_CREATURE)) {
++        SYNCLOG("Vita sidebar: focused creature portrait index=%d row=%u at (%d,%d)",
++                index, (unsigned int)b->btype_value, s_mouseX, s_mouseY);
++    }
++    s_pointerTouchDriven = false;
++    s_cursorFracX = s_cursorFracY = 0.0f;
++}
++
++static void vita_nav_step(short tab, int dx, int dy)
++{
++    if (!s_menuFocusActive || s_focusedButton < 0 ||
++        s_focusedButton >= ACTIVE_BUTTONS_COUNT ||
++        !vita_nav_button_eligible(&active_buttons[s_focusedButton], tab)) {
++        vita_nav_focus_button(vita_nav_first_button(tab));
++        return;
++    }
++    const int from_x = s_mouseX;
++    const int from_y = s_mouseY;
++    int best = -1;
++    /* Use integer scores for deterministic selection on ARM32. The primary
++     * axis wins; secondary displacement is penalised to prefer same row/col. */
++    int64_t best_score = INT64_MAX;
++    for (int i = 0; i < ACTIVE_BUTTONS_COUNT; ++i) {
++        if (i == s_focusedButton) continue;
++        const struct GuiButton* b = &active_buttons[i];
++        if (!vita_nav_button_eligible(b, tab)) continue;
++        const int bx = b->pos_x + b->width / 2;
++        const int by = b->pos_y + b->height / 2;
++        int forward = (bx - from_x) * dx + (by - from_y) * dy;
++        if (forward <= 0) continue;
++        int cross = (bx - from_x) * dy - (by - from_y) * dx;
++        int64_t score = (int64_t)forward * 16 + (int64_t)cross * cross * 8;
++        if (score < best_score) { best_score = score; best = i; }
++    }
++    if (best >= 0) vita_nav_focus_button(best);
++}
++
++static void vita_nav_update(unsigned int newly_pressed)
++{
++    const unsigned int shoulders = newly_pressed & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER);
++    const bool active = vita_sidebar_is_active();
++    if (shoulders != 0) {
++        /* Log the *raw* physical button edge before any GUI/touch gate. This
++         * distinguishes controller detection from a blocked menu action. */
++        SYNCLOG("Vita input: shoulder edge=0x%03x sidebar=%d touch=%d mousebuttons=0x%x",
++                shoulders, (int)active, (int)s_touchDataFront.reportNum,
++                s_padData.buttons & (SCE_CTRL_CROSS | SCE_CTRL_CIRCLE));
++    }
++    if (!active) {
++        s_menuFocusActive = false;
++        s_focusNextTab = false;
++        s_focusedButton = -1;
++        s_pendingTabStep = 0;
++        return;
++    }
++    /* L/R are independent of the cursor, X and front-touch. Their edges must
++     * not be discarded when a finger is still on the touchscreen. A click
++     * remains handled by the original GUI path on the next gameplay tick. */
++    if (shoulders == SCE_CTRL_LTRIGGER || shoulders == SCE_CTRL_RTRIGGER) {
++        s_pendingTabStep = (shoulders == SCE_CTRL_LTRIGGER) ? -1 : 1;
++        SYNCLOG("Vita sidebar: queued shoulder %s", s_pendingTabStep < 0 ? "L" : "R");
++        s_menuFocusActive = false;
++        s_focusedButton = -1;
++        s_focusNextTab = true;
++        return;
++    }
++    if (s_frontTouchActive || s_touchDataFront.reportNum > 0) {
++        s_menuFocusActive = false;
++        s_focusedButton = -1;
++        /* Do not discard a tab step queued while touch was active. */
++        return;
++    }
++    /* Do not move the focused target while mouse buttons are held; a held X
++     * could otherwise click an unintended new item. */
++    if (s_padData.buttons & (SCE_CTRL_CROSS | SCE_CTRL_CIRCLE))
++        return;
++    /* Wait until the gameplay handler has actually changed the tab; a pad
++     * poll can otherwise select an item from the previous tab. */
++    if (s_pendingTabStep != 0)
++        return;
++    short tab = vita_current_tab_button();
++    if (s_menuFocusActive && s_focusedButton >= 0 &&
++        !vita_nav_button_eligible(&active_buttons[s_focusedButton], tab)) {
++        s_menuFocusActive = false;
++        s_focusedButton = -1;
++        s_focusNextTab = true;
++    }
++    if (s_focusNextTab) {
++        int index = vita_nav_first_button(tab);
++        if (index >= 0) {
++            vita_nav_focus_button(index);
++            s_focusNextTab = false;
++        }
++    }
++    if (newly_pressed & SCE_CTRL_UP) vita_nav_step(tab, 0, -1);
++    else if (newly_pressed & SCE_CTRL_DOWN) vita_nav_step(tab, 0, 1);
++    else if (newly_pressed & SCE_CTRL_LEFT) vita_nav_step(tab, -1, 0);
++    else if (newly_pressed & SCE_CTRL_RIGHT) vita_nav_step(tab, 1, 0);
++}
++
+ static int touch_x_to_screen(int x)
+ {
+     return clamp_int((x * VITA_SCREEN_WIDTH) / VITA_TOUCH_WIDTH,
+@@ -156,13 +358,21 @@
+     unsigned char new_state[KC_LIST_END];
+     memset(new_state, 0, sizeof(new_state));
+ 
++    if (!vita_sidebar_is_active()) {
++        if (s_padData.buttons & SCE_CTRL_RTRIGGER) new_state[KC_LCONTROL] = 1;
++        if (s_padData.buttons & SCE_CTRL_UP) new_state[KC_UP] = 1;
++        if (s_padData.buttons & SCE_CTRL_DOWN) new_state[KC_DOWN] = 1;
++        if (s_padData.buttons & SCE_CTRL_LEFT) new_state[KC_LEFT] = 1;
++        if (s_padData.buttons & SCE_CTRL_RIGHT) new_state[KC_RIGHT] = 1;
++    }
++
+     for (int i = 0; i < (int)BUTTON_MAP_SIZE; i++) {
+         if (s_padData.buttons & s_buttonMap[i].btn_vita) {
+             new_state[s_buttonMap[i].keycode] = 1;
+         }
+     }
+ 
+-    if (s_padData.buttons & SCE_CTRL_L1) {
++    if ((s_padData.buttons & SCE_CTRL_LTRIGGER) && !vita_sidebar_is_active()) {
+         new_state[KC_UP] = 0;
+         new_state[KC_DOWN] = 0;
+     }
+@@ -286,7 +496,6 @@
+ }
+ 
+ static uint64_t s_lastSampleTime;
+-static float s_cursorFracX, s_cursorFracY;
+ static unsigned int s_previousButtons;
+ static bool s_waitForRelease;
+ 
+@@ -314,7 +523,7 @@
+ {
+     const int raw_x = (int)s_padData.rx - 128;
+     const int raw_y = (int)s_padData.ry - 128;
+-    const float precision = (s_padData.buttons & SCE_CTRL_L1) ? 0.2f : 1.0f;
++    const float precision = ((s_padData.buttons & SCE_CTRL_LTRIGGER) && !vita_sidebar_is_active()) ? 0.2f : 1.0f;
+     if (abs(raw_x) >= VITA_STICK_DEADZONE || abs(raw_y) >= VITA_STICK_DEADZONE)
+         s_pointerTouchDriven = false;
+     update_cursor_from_stick(dt, raw_x, raw_y, precision);
+@@ -406,7 +615,7 @@
+ 
+     update_rear_touch_wheel();
+     unsigned int pressed = s_padData.buttons & ~s_previousButtons;
+-    if (s_padData.buttons & SCE_CTRL_L1) {
++    if ((s_padData.buttons & SCE_CTRL_LTRIGGER) && !vita_sidebar_is_active()) {
+         if (pressed & SCE_CTRL_UP) s_wheelPulses++;
+         if (pressed & SCE_CTRL_DOWN) s_wheelPulses--;
+     }
+@@ -425,6 +634,15 @@
+     } else {
+         s_cursorFracX = s_cursorFracY = 0.0f;
+     }
++    /* The physical D-pad is reserved for selecting items in the visible
++     * in-game sidebar. The right stick and touch can still freely move the
++     * mouse pointer and immediately cancel the button focus. */
++    if (abs((int)s_padData.rx - 128) >= VITA_STICK_DEADZONE ||
++        abs((int)s_padData.ry - 128) >= VITA_STICK_DEADZONE) {
++        s_menuFocusActive = false;
++        s_focusedButton = -1;
++    }
++    vita_nav_update(pressed);
+     update_physical_mouse_buttons();
+     apply_click_pulses();
+ }
+@@ -451,6 +669,35 @@
+ int vita_pointer_is_touch_driven(void)
+ {
+     return s_pointerTouchDriven ? 1 : 0;
++}
++
++/* Consume the shoulder event only from the regular gameplay GUI handler. */
++int vita_consume_sidebar_tab_step(void)
++{
++    int delta = s_pendingTabStep;
++    s_pendingTabStep = 0;
++    return delta;
++}
++
++/* Visible focus outline. The index is checked each frame against the current
++ * GUI state; never keep a GuiButton pointer across menu reconstruction. */
++int vita_get_sidebar_focus_rect(int *x, int *y, int *w, int *h)
++{
++    if (!s_menuFocusActive || !vita_sidebar_is_active() ||
++        s_focusedButton < 0 || s_focusedButton >= ACTIVE_BUTTONS_COUNT)
++        return 0;
++    const struct GuiButton *b = &active_buttons[s_focusedButton];
++    if (!vita_nav_button_eligible(b, vita_current_tab_button()))
++        return 0;
++    if (b->pos_x < 0 || b->pos_y < 0 || b->width < 2 || b->height < 2 ||
++        b->pos_x + b->width > VITA_SCREEN_WIDTH ||
++        b->pos_y + b->height > VITA_SCREEN_HEIGHT)
++        return 0;
++    if (x) *x = b->pos_x;
++    if (y) *y = b->pos_y;
++    if (w) *w = b->width;
++    if (h) *h = b->height;
++    return 1;
+ }
+ 
+ void vita_get_virtual_mouse(int* x, int* y, int* buttons)
+@@ -527,8 +774,14 @@
+     s_lastSampleTime = 0;
+     s_waitForRelease = false;
+     s_previousButtons = 0;
++    s_menuFocusActive = false;
++    s_focusNextTab = false;
++    s_focusedButton = -1;
++    s_pendingTabStep = 0;
+     s_cursorFracX = s_cursorFracY = 0.0f;
+     g_input = &input_vita_impl;
++    SYNCLOG("Vita controller RC4: physical L=0x%03x R=0x%03x; creature portraits use owner menu slot",
++            SCE_CTRL_LTRIGGER, SCE_CTRL_RTRIGGER);
+ }
+ 
+ /******************************************************************************/
