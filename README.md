@@ -16,12 +16,14 @@ Unofficial PlayStation Vita port / hardware-test branch of [KeeperFX](https://gi
 - Right analog stick, front touch and original map controls remain available.
 - PS Vita system language selects available KeeperFX language/campaign audio (German confirmed).
 
+LiveArea-Handbuch mit finaler Steuerung: **[MANUAL-v1.03.md](MANUAL-v1.03.md)**. Die bevorzugte VPK ist jetzt `KeeperFX-Vita-v1.03-FINAL-MANUAL-UPDATE-no-game-data.vpk`: gleicher RC4-Spielcode, nur die sechs eingebetteten Handbuchseiten wurden erneuert.
+
 Full changes: **[CHANGELOG-v1.03.md](CHANGELOG-v1.03.md)**.  
 Final release notes and source/workspace package description: **[RELEASE-v1.03.md](RELEASE-v1.03.md)**.
 
 ## Installing and game data
 
-1. Obtain the public `KeeperFX-Vita-v1.03-FINAL-no-game-data.vpk` build.
+1. Obtain the public `KeeperFX-Vita-v1.03-FINAL-MANUAL-UPDATE-no-game-data.vpk` build (final RC4 program, corrected in-bubble manual).
 2. Install via VitaShell.
 3. Provide your own legally acquired Dungeon Keeper and compatible KeeperFX data under `ux0:data/keeperfx/`.
 4. Start KeeperFX from the existing LiveArea bubble (`KFXV00001`).
