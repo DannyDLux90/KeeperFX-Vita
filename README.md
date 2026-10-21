@@ -2,68 +2,48 @@
 
 Unofficial PlayStation Vita port / hardware-test branch of [KeeperFX](https://github.com/dkfans/keeperfx).
 
-> **Current public status: v1.02 (hardware tested on a real PS Vita)**
+> **Current public status: v1.03 — hardware tested on a real PS Vita (Controller RC4)**
 >
-> This repository intentionally does **not** contain commercial Dungeon Keeper game data.
+> This repository intentionally contains **no commercial Dungeon Keeper game data**.
 
-## What currently works
+## v1.03 highlights
 
-- KeeperFX boots and is playable on PS Vita.
-- Very good in-game performance on the tested campaign levels.
-- Fix for corrupted transferred-creature records that previously caused severe Level 2 stutter.
-- PS Vita system language is applied automatically to KeeperFX. German has been verified on hardware.
-- German campaign speech/audio is selected correctly when the Vita system language is German.
-- Cross = left mouse click / confirm.
-- Circle = right mouse click.
-- Front touch works as pointer/touch input.
-- Rear touch pad is disabled.
-- Local packet history is kept even with networking disabled, so camera/world controls work correctly.
-- LiveArea / bubble assets use the known-good integrated Vita assets.
+- Native **960 × 544** display (PAL8 software rendering + vitaGL precompiled palette shader).
+- Fixed the level-start crash caused by the minimap's 16-background-colour allocation overflowing into GUI/camera data.
+- Fixed distorted intro audio with **four KVF frames of audio preroll**, preserving the original lossless PCM data and native KVF video playback.
+- German world-map MP3 narration works through the Vita audio output with double buffering.
+- Improved PS Vita ingame controls: **L/R** cycle sidebar tabs, **D-pad** navigates buttons, **X/Cross** selects a highlighted item, including **creature portraits** directly. A yellow focus outline marks the currently selected item.
+- Right analog stick, front touch and original map controls remain available.
+- PS Vita system language selects available KeeperFX language/campaign audio (German confirmed).
 
-## Known issues
+Full changes: **[CHANGELOG-v1.03.md](CHANGELOG-v1.03.md)**.  
+Final release notes and source/workspace package description: **[RELEASE-v1.03.md](RELEASE-v1.03.md)**.
 
-- **In-game `Spiel beenden` / Quit to main menu is still broken.** The quit action clears the local player state, but the gameplay loop does not reliably terminate and return to the frontend. Workaround: close the application with the PS Vita system UI and restart it.
-- Multiplayer/networking is **not enabled in the stable v1.02 build**. LAN/direct-IP work exists only as an unfinished probe; see `NETWORK.md`.
-- The exact hardware-tested v1.02 binary still contains a few validated post-link/VELF patches. A fully clean source-only rebuild that reproduces the exact public binary is still TODO; see `STATUS.md`.
-- Some non-fatal configuration warnings from the current KeeperFX data set may appear in `keeperfx.log`.
+## Installing and game data
 
-## Installing
-
-1. Install the public VPK with VitaShell.
-2. Provide your own legal Dungeon Keeper data and KeeperFX data under `ux0:data/keeperfx/`.
-3. Start KeeperFX from LiveArea.
+1. Obtain the public `KeeperFX-Vita-v1.03-FINAL-no-game-data.vpk` build.
+2. Install via VitaShell.
+3. Provide your own legally acquired Dungeon Keeper and compatible KeeperFX data under `ux0:data/keeperfx/`.
+4. Start KeeperFX from the existing LiveArea bubble (`KFXV00001`).
 
 Full instructions: **[INSTALL.md](INSTALL.md)**.
 
-The public VPK contains only a tiny license-free placeholder data archive because the current first-run bootstrap expects `app0:/game_data/keeperfx_data_bundle.zip`. It contains **no game assets**.
+The public VPK contains only the noncommercial bootstrap placeholder data archive. Do **not** redistribute an integrated private VPK containing proprietary game assets.
 
-## Screenshots
-<img width="960" height="544" alt="2026-09-14-123237" src="https://github.com/user-attachments/assets/b990edd4-7b3a-489e-901c-8aebc4f5e134" />
-<img width="960" height="544" alt="2026-09-14-123145" src="https://github.com/user-attachments/assets/f2221dd3-8465-4b61-8cbc-cf60d1c4ab1f" />
-<img width="960" height="544" alt="2026-09-14-123128" src="https://github.com/user-attachments/assets/fbb4e306-596b-49c7-873d-c0202461c7df" />
-<img width="960" height="544" alt="2026-09-14-123112" src="https://github.com/user-attachments/assets/0e7e54c6-3f70-4229-9cd9-7d5c7e46690b" />
+## What is verified and what is not
 
+**Hardware-tested:** level starts and gameplay (including level 4), clean introductory audio, map speech and RC4 sidebar controls. Native 960×544 rendering is retained.
 
-## Release files
+**Not independently re-tested during final RC4 acceptance:** quit-to-menu reliability and LAN/Ad-Hoc multiplayer. Networking source experiments are not a promise of supported release functionality. See [STATUS.md](STATUS.md) and [NETWORK.md](NETWORK.md).
 
-Recommended public release name:
+**Not included:** the experimental FFmpeg replacement KVF video renderer, the 640×480 intro-mode experiment, or the two-start-button recorder/debug-bubble prototype.
 
-`KeeperFX-Vita-v1.02-PUBLIC-no-game-data.vpk`
+## Source / workspace
 
-Do **not** publicly distribute the private integrated VPK because that package contains user-supplied game data.
+The full final source tree and build workspace were prepared as companion release archives, without commercial game data. This repository maintains release docs, provenance, and patch notes rather than checking large binary workspaces into Git. See [SOURCES.md](SOURCES.md) and [RELEASE-v1.03.md](RELEASE-v1.03.md).
 
-## Project status / TODO
+Upstream pinned base: `dkfans/keeperfx @ 466e0753e17cee876f2ace6fa6b1e17f3ad44b0d`.
 
-See **[STATUS.md](STATUS.md)** for the exact hardware-tested state and **[NETWORK.md](NETWORK.md)** for the multiplayer roadmap.
+## Licence
 
-## Upstream and sources
-
-The port is based on KeeperFX and the Vita homebrew toolchain/ecosystem. Exact references and the pinned upstream commit are documented in **[SOURCES.md](SOURCES.md)**.
-
-KeeperFX upstream base used for this development line:
-
-`dkfans/keeperfx @ 466e0753e17cee876f2ace6fa6b1e17f3ad44b0d`
-
-## License
-
-KeeperFX is GPL-2.0 licensed. This repository carries the corresponding GPL-2.0 license for source modifications. Commercial Dungeon Keeper assets are not part of this repository or the public VPK.
+KeeperFX and the corresponding Vita source modifications use GPL-2.0. Third-party libraries retain their own licences. Commercial Dungeon Keeper assets are not included.
