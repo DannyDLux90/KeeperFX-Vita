@@ -44,6 +44,13 @@ The full final source tree and build workspace were prepared as companion releas
 
 Upstream pinned base: `dkfans/keeperfx @ 466e0753e17cee876f2ace6fa6b1e17f3ad44b0d`.
 
+## Screenshots
+
+<img width="960" height="544" alt="KeeperFX Vita screenshot 1" src="https://github.com/user-attachments/assets/b990edd4-7b3a-489e-901c-8aebc4f5e134" />
+<img width="960" height="544" alt="KeeperFX Vita screenshot 2" src="https://github.com/user-attachments/assets/f2221dd3-8465-4b61-8cbc-cf60d1c4ab1f" />
+<img width="960" height="544" alt="KeeperFX Vita screenshot 3" src="https://github.com/user-attachments/assets/fbb4e306-596b-49c7-873d-c0202461c7df" />
+<img width="960" height="544" alt="KeeperFX Vita screenshot 4" src="https://github.com/user-attachments/assets/0e7e54c6-3f70-4229-9cd3-7d5c7e46690b" />
+
 ## Licence
 
 KeeperFX and the corresponding Vita source modifications use GPL-2.0. Third-party libraries retain their own licences. Commercial Dungeon Keeper assets are not included.
