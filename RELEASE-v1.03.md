@@ -18,6 +18,19 @@ Companion artifacts prepared with this release:
 
 **These large ZIP/VPK artifacts are provided separately, not stored as binaries in this documentation repository.** The project can link a release attachment or externally hosted archive here once published. Never substitute a private integrated game-data package.
 
+## Artifact integrity
+
+SHA-256:
+
+| Artifact | SHA-256 |
+|---|---|
+| `KeeperFX-Vita-v1.03-FINAL-no-game-data.vpk` | `d2b051f0fadf4e84f2feaded6b3a78aafee6f968da6f2fc6856ba6738c74cb7d` |
+| `KeeperFX-Vita-v1.03-FINAL-SOURCE-no-game-data.zip` | `9dbdd608f973381f26fc7e93131105191b28b1e5f65d516360b612d6c8e1747b` |
+| `KeeperFX-Vita-v1.03-FINAL-WORKSPACE-no-game-data.zip` | `8298f13334cb23e6490c311cc8522d92466753318bf9d9dc283543d26b01edc0` |
+| `patches/v1.03/v1.03-FINAL-vs-original103.patch` | `6756d04d9874fa6350efeb414af0c7c03143f1be26692a28d73bd27e5d3a45ef` |
+
+The patch file is [committed to this repository](patches/v1.03/v1.03-FINAL-vs-original103.patch), while the full source and workspace ZIP files are distributed as separate downloadable companion artifacts.
+
 ## VitaSDK build requirements
 
 The final workspace used VitaSDK at `/mnt/data/sdk_vita/vitasdk` in the original environment. On other machines, install matching VitaSDK toolchain and dependencies and reconfigure CMake; cached absolute paths must not be reused. Conceptual example:
