@@ -1,4 +1,4 @@
-# Installation — KeeperFX Vita v1.02
+# Installation — KeeperFX Vita v1.03
 
 The public VPK intentionally contains **no commercial Dungeon Keeper game data**.
 
@@ -6,7 +6,7 @@ The public VPK intentionally contains **no commercial Dungeon Keeper game data**
 
 - A PS Vita / PS TV capable of running homebrew.
 - VitaShell (or an equivalent VPK/file manager).
-- The public KeeperFX Vita v1.02 VPK.
+- The public KeeperFX Vita v1.03 VPK.
 - A legal copy of **Dungeon Keeper** (for example GOG or CD).
 - KeeperFX release data compatible with this development line.
 
@@ -17,7 +17,7 @@ Copy the VPK to the Vita and install it with VitaShell.
 Recommended public filename:
 
 ```text
-KeeperFX-Vita-v1.02-PUBLIC-no-game-data.vpk
+KeeperFX-Vita-v1.03-FINAL-no-game-data.vpk
 ```
 
 The application installs as **KeeperFX** with title ID:
@@ -78,9 +78,9 @@ A minimal configuration should include:
 INSTALL_PATH .
 ```
 
-The v1.02 Vita build automatically selects the KeeperFX language from the PS Vita system language. German has been verified on hardware, so manually forcing `LANGUAGE GER` is not required for the current build.
+The v1.03 Vita build automatically selects the KeeperFX language from the PS Vita system language. German has been verified on hardware, so manually forcing `LANGUAGE GER` is not required for the current build.
 
-If an existing `keeperfx.cfg` already contains a `LANGUAGE` line, v1.02 still applies the Vita system-language selection during startup.
+If an existing `keeperfx.cfg` already contains a `LANGUAGE` line, v1.03 still applies the Vita system-language selection during startup.
 
 ## Important first-start note
 
@@ -116,6 +116,6 @@ Installing a newer VPK with the same title ID normally updates the application w
 
 Keep a backup of your saves/configuration before testing development builds.
 
-## Current known issue
+## Current caveats
 
-The in-game menu action **`Spiel beenden` / Quit game** still does not return reliably to the main menu. Until this is fixed, use the PS Vita system UI to close KeeperFX when you want to leave a running level.
+Quit-to-main-menu was not independently re-tested in final RC4 acceptance. If it misbehaves, close KeeperFX through the PS Vita system UI and report the issue.
