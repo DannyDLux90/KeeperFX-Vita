@@ -1,7 +1,8 @@
 # KeeperFX Vita v1.03 — release and reproducibility notes
 
 **Hardware-accepted program:** Controller RC4 (`KeeperFX-Vita-v1.03-CONTROLLER-RC4-TEST.vpk`).  
-**Public release filename:** `KeeperFX-Vita-v1.03-FINAL-no-game-data.vpk`.  
+**Original hardware-tested RC4 VPK:** `KeeperFX-Vita-v1.03-FINAL-no-game-data.vpk`.
+**Preferred final VPK (manual corrected):** `KeeperFX-Vita-v1.03-FINAL-MANUAL-UPDATE-no-game-data.vpk`.  
 **Title ID:** `KFXV00001`.  
 **Release SHA-256:** `d2b051f0fadf4e84f2feaded6b3a78aafee6f968da6f2fc6856ba6738c74cb7d`.
 
@@ -17,6 +18,21 @@ Companion artifacts prepared with this release:
 - `CHANGELOG-v1.03.md` — v1.02 → v1.03 release notes.
 
 **These large ZIP/VPK artifacts are provided separately, not stored as binaries in this documentation repository.** The project can link a release attachment or externally hosted archive here once published. Never substitute a private integrated game-data package.
+
+## LiveArea manual documentation correction (2026-10-21)
+
+The final packaging has been refreshed with the real v1.03 control layout in the LiveArea manual (six PNG pages). **The ARM/Vita executable is byte-for-byte identical** to the RC4 VPK, and the app retains `KFXV00001`. This is an asset-only revision; no game rebuild or additional gameplay changes.
+
+Recommended download: `KeeperFX-Vita-v1.03-FINAL-MANUAL-UPDATE-no-game-data.vpk`  
+SHA-256: `21f73fe8f8f223b3f40ce291da9544c956a66a858954b66fd2a9aeff78cb8a1d`
+
+Accompanying updated source ZIP: `KeeperFX-Vita-v1.03-FINAL-MANUAL-UPDATE-SOURCE-no-game-data.zip`  
+SHA-256: `1a05668965e33831d1b5ea8bec7d930769f125bc1dd2c0ecc5a5269ba8f85e3b`
+
+Accompanying updated workspace ZIP: `KeeperFX-Vita-v1.03-FINAL-MANUAL-UPDATE-WORKSPACE-no-game-data.zip`  
+SHA-256: `d425a71bd0f3019155f0c07bc268a3c94cb925fa30b748facf25a5163c8cdb33`
+
+Full page description: [MANUAL-v1.03.md](MANUAL-v1.03.md).
 
 ## Artifact integrity
 
