@@ -61,3 +61,10 @@ Users must provide game files from their own legally obtained copy (for example 
 ## Licensing
 
 KeeperFX source is distributed under GNU GPL v2. The modifications in this repository follow that license. Individual third-party dependencies remain under their respective upstream licenses.
+
+
+## Final Vita v1.03 source and workspace
+
+The **final 1.03 source archive** contains the retained 2026-09-20 Vita source tree plus six updated source files implementing native KVF intro preroll, minimap bounds/capacity correction and final RC4 controller navigation. A corresponding **workspace archive** includes the compiled ARM binary, debug symbols, Vita SELF/VPK and original CMake/Ninja build metadata. These archives were prepared separately from this documentation repository and are not stored here as binary Git blobs. See [RELEASE-v1.03.md](RELEASE-v1.03.md) and [CHANGELOG-v1.03.md](CHANGELOG-v1.03.md).
+
+The confirmed final no-game-data VPK SHA-256 is `d2b051f0fadf4e84f2feaded6b3a78aafee6f968da6f2fc6856ba6738c74cb7d`. Reproducing a source build needs the compatible VitaSDK and third-party toolchain components; the archives do **not** include the SDK or commercial game data.
