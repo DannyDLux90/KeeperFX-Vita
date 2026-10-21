@@ -1,71 +1,30 @@
-# KeeperFX Vita v1.02 — exact status
+# KeeperFX Vita v1.03 — hardware acceptance status
 
-This document describes the **hardware-tested state**, not planned features.
+## Current working baseline
 
-## Hardware-tested working state
+**Version:** 1.03 (Controller RC4)  
+**PS Vita title ID:** `KFXV00001`  
+**VPK SHA-256:** `d2b051f0fadf4e84f2feaded6b3a78aafee6f968da6f2fc6856ba6738c74cb7d`  
+**Real-hardware result:** user confirmed “v1.03 is finished and working as intended.”
 
-The current stable public baseline is **v1.02**, derived from the previously confirmed v1.01 performance/rear-touch baseline.
+### Confirmed functionality
 
-Verified on a real PS Vita:
+- PS Vita boots the game and can start level 4; the previously recurring 100% load crash has been fixed.
+- Root cause of the level crash: minimap colour table allowed only 16 background colours and wrote beyond the array. Final source allocates sufficient space for detected colours (28 seen in the hardware log).
+- Native 960×544 display, frontend, land-view and gameplay.
+- Native KVF intro audio with four-frame (~228 ms) preroll; tester confirmed audible distortion removed.
+- World-map narration, including German map speech.
+- Final RC4 input: L/R sidebar tab switching, D-pad target navigation, visible focus highlight, X confirmation, direct creature-portrait selection.
+- Front touch, analog sticks and gameplay input remain supported; system language mapping retained.
 
-- Application starts normally.
-- Campaign gameplay works.
-- Level 2 performance is good and the previous ~1 FPS / severe stutter regression is fixed.
-- The transferred-creature guard accepts only valid creature models **1..36** in the currently tested data set and rejects model 0 / corrupt transfer entries.
-- Vita system language selection works. With the Vita set to German, KeeperFX menus/campaign selection use German and the original campaign audio is loaded from `campgns/keeporig_ger/`.
-- Rear touch pad is disabled.
-- Front touch remains active.
-- Cross behaves as left mouse click / confirm.
-- Circle behaves as right mouse click.
-- The local 40-turn packet-history workaround remains active with networking disabled, preserving local world/camera controls.
-- The Vita logger crash path through the unavailable `sceClibPrintf` route is bypassed in the stable binary.
+### Not part of this acceptance statement
 
-## Known broken behavior
+- LAN / Ad-Hoc multiplayer source work has **not** been fully exercised in the final 1.03 hardware run.
+- Quit-to-main-menu had a known v1.02 problem. Later source contains quit-path changes, but the final RC4 test did not explicitly verify that case. Please report any regression.
+- Developer recorder/dual-Start LiveArea prototype and experimental FFmpeg replacement video renderer are excluded from RC4.
 
-### In-game Quit / `Spiel beenden`
+### Release provenance
 
-**Still broken in v1.02.**
+The v1.03 VPK equals the tested RC4 binary byte-for-byte. The complete final source snapshot differs from the initial September 2026 v1.03 sources in six C/C++ files and is delivered as a separate ZIP together with a workspace archive.
 
-Observed behavior from the hardware log after confirming the in-game quit dialog:
-
-- the local player's allocated flag becomes zero;
-- `view_type` / `view_mode` transition to zero;
-- the gameplay loop keeps running instead of returning cleanly to the frontend.
-
-Several experimental quit helpers were tried and rejected. They are **not considered fixed** and are not the basis of the public stable build.
-
-Workaround: exit KeeperFX through the PS Vita system UI and restart the application.
-
-### Source-only reproducibility
-
-The current hardware-tested v1.02 program is based on the Vita source tree plus a small number of validated post-link/VELF changes. The exact binary is therefore **not yet reproduced by one clean source-only build**.
-
-This is a known technical debt item. The intended final state is to move the verified language/performance/input fixes into normal source code and link them with vitaSDK without post-link patching.
-
-## Performance fix details
-
-The important transferred-creature validation used by the stable binary is equivalent to:
-
-```text
-model = transferred_creature.model
-if ((unsigned)(model - 1) > 35)
-    skip transfer
-```
-
-That accepts only models 1..36 and rejects model 0 and corrupted large values. The final clean source version should not hard-code 36; it should validate against KeeperFX's runtime creature model count.
-
-## Language state
-
-v1.02 maps the PS Vita system language to KeeperFX before language-dependent resources are selected. German has been verified on hardware.
-
-The target mapping includes Japanese, English, French, Spanish, German, Italian, Dutch, Portuguese, Russian, Korean, Traditional/Simplified Chinese, Swedish, Danish, Norwegian and Polish where KeeperFX has corresponding language support. Unsupported Vita languages fall back to English.
-
-## Networking state
-
-Networking is disabled in this stable build. The goal is Vita ↔ PC multiplayer on the same WLAN using LAN discovery and/or direct IPv4 entry. See `NETWORK.md` for the unfinished probe state.
-
-## Version history policy
-
-Development experiments after the stable v1.01 baseline were discarded. The current release line is intentionally numbered **v1.02**.
-
-Only behavior confirmed on physical hardware is described as working in this document.
+See [CHANGELOG-v1.03.md](CHANGELOG-v1.03.md), [RELEASE-v1.03.md](RELEASE-v1.03.md), [SOURCES.md](SOURCES.md) and [NETWORK.md](NETWORK.md). No commercial Dungeon Keeper assets are distributed.
