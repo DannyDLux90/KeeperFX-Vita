@@ -17,7 +17,7 @@ Copy the VPK to the Vita and install it with VitaShell.
 Recommended public filename:
 
 ```text
-KeeperFX-Vita-v1.03-FINAL-no-game-data.vpk
+KeeperFX-Vita-v1.03-FINAL-MANUAL-UPDATE-no-game-data.vpk
 ```
 
 The application installs as **KeeperFX** with title ID:
@@ -119,3 +119,8 @@ Keep a backup of your saves/configuration before testing development builds.
 ## Current caveats
 
 Quit-to-main-menu was not independently re-tested in final RC4 acceptance. If it misbehaves, close KeeperFX through the PS Vita system UI and report the issue.
+
+
+## Updated LiveArea manual
+
+The final v1.03 package includes the **six-page LiveArea manual** with the current shoulder-button, D-pad, X and creature-portrait controls. See [MANUAL-v1.03.md](MANUAL-v1.03.md). The change updates no executable code and does not replace user game data. The Vita may need to refresh the application's LiveArea after reinstalling.
