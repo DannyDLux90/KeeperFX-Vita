@@ -1,0 +1,94 @@
+--- a/src/input/input_vita.c
++++ b/src/input/input_vita.c
+@@ -524,9 +524,10 @@
+  * The ordinary Vita pointer is absolute and is not recentered by the
+  * engine's LbMouseSetPositionInitial(), so it could rotate a creature forever.
+  * Feed the existing first-person packet with a signed, centred stick vector.
+- * A modest range leaves the creature's original turning-speed cap effective.
++ * The larger range is paired with a Vita-only 3x possession turn cap;
++ * deadzone and neutral-stick zero output are unchanged.
+  */
+-#define VITA_POSSESSION_LOOK_MAX 14
++#define VITA_POSSESSION_LOOK_MAX 48
+ 
+ static int vita_possession_axis(unsigned char sample)
+ {
+@@ -808,6 +809,7 @@
+     g_input = &input_vita_impl;
+     SYNCLOG("Vita controller RC4: physical L=0x%03x R=0x%03x; creature portraits use owner menu slot",
+             SCE_CTRL_LTRIGGER, SCE_CTRL_RTRIGGER);
++    SYNCLOG("Vita possession speed V2: deadzone=30, max=48, turn_cap=3x (TEST)");
+ }
+ 
+ /******************************************************************************/
+--- a/src/front_input.c
++++ b/src/front_input.c
+@@ -2670,7 +2670,7 @@
+         pckt->pos_y = settings.first_person_move_invert ? look_y : -look_y;
+         static TbBool vita_possession_reported = false;
+         if (!vita_possession_reported) {
+-            SYNCLOG("Vita possession: direct right-stick look, deadzone=30, max=14");
++            SYNCLOG("Vita possession: direct right-stick look, deadzone=30, max=48, turn_cap=3x");
+             vita_possession_reported = true;
+         }
+ #endif
+--- a/src/packets.c
++++ b/src/packets.c
+@@ -1208,6 +1208,15 @@
+     if (maxTurnSpeed < 1) {
+         maxTurnSpeed = 1;
+     }
++#ifdef PLATFORM_VITA
++    /* Vita possession uses an analog stick rather than a recentered mouse.
++     * Its former 14-unit input was almost at the default 15-unit creature
++     * turn cap, so changing stick sensitivity alone could not help.
++     * Apply a Vita-only 3x limit to directly controlled first-person view;
++     * normal creature movement/AI turn limits stay unchanged.
++     * Packet coordinates are still clamped to [-255,255] upstream. */
++    maxTurnSpeed *= 3;
++#endif
+     long horizontalTurnSpeed = pckt->pos_x;
+     if (horizontalTurnSpeed < -maxTurnSpeed) {
+         horizontalTurnSpeed = -maxTurnSpeed;
+--- a/tests/vita_possession_axis_regression.c
++++ b/tests/vita_possession_axis_regression.c
+@@ -2,7 +2,7 @@
+ #include <stdlib.h>
+ #include <assert.h>
+ #define VITA_STICK_DEADZONE 30
+-#define VITA_POSSESSION_LOOK_MAX 14
++#define VITA_POSSESSION_LOOK_MAX 48
+ 
+ static int vita_possession_axis(unsigned char sample)
+ {
+@@ -18,18 +18,26 @@
+     int prev=-99;
+     for (int sample=0; sample<=255; sample++) {
+         const int v=vita_possession_axis((unsigned char)sample);
+-        assert(v >= -14 && v <= 14);
++        assert(v >= -48 && v <= 48);
+         assert(v >= prev);
+         prev=v;
+         if (sample>=98 && sample<=158) assert(v==0);
+     }
+     assert(vita_possession_axis(128)==0);
+     assert(vita_possession_axis(127)==0);
+-    assert(vita_possession_axis(0)==-14);
+-    assert(vita_possession_axis(255)==14);
++    assert(vita_possession_axis(0)==-48);
++    assert(vita_possession_axis(255)==48);
+     assert(vita_possession_axis(180)>0);
+     assert(vita_possession_axis(60)<0);
+     assert(-vita_possession_axis(128)==0);  /* neutral vertical, too */
+-    puts("PASS: neutral, deadzone, monotonic, bounds, both axes");
++    /* For a default creature (max turning speed 15), the Vita possession
++     * cap is 3*15=45. Original maximum stick input was 14, so the new full
++     * stick applies 45 per frame instead of 14; zero must still stay zero. */
++    assert(vita_possession_axis(255) > 45);
++    const int default_cap = 15 * 3;
++    const int full_x = vita_possession_axis(255);
++    assert((full_x < default_cap ? full_x : default_cap) == 45);
++    assert(vita_possession_axis(128) == 0);
++    printf("PASS: neutral, deadzone, monotonic, bounds; full input=%d, effective cap=%d\n", full_x, default_cap);
+     return 0;
+ }
